@@ -1,0 +1,10 @@
+---
+ - name: what
+   hosts: webserver
+   become: true
+   become_method: sudo
+   roles:
+   - ansible-role-python
+   - ansible-role-openjdk
+   - ansible-role-jira
+   - os-hardening

@@ -1,0 +1,205 @@
+---
+
+# (c) Wong Hoi Sing Edison <hswong3i@pantarei-design.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: include default variables
+  include_vars: "../vars/main.yml"
+
+- name: include release specific variables
+  include_vars: "{{ lookup('first_found', _params) }}"
+  vars:
+    _params:
+      files:
+        - "{{ ansible_distribution | lower }}-{{ ansible_distribution_version | lower }}.yml"
+        - "{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+        - "{{ ansible_os_family | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+        - "{{ ansible_distribution | lower }}.yml"
+        - "{{ ansible_os_family | lower }}.yml"
+      paths:
+        - "../vars"
+  ignore_errors: true
+
+- name: include release specific tasks
+  include_tasks: "{{ lookup('first_found', _params) }}"
+  vars:
+    _params:
+      files:
+        - "{{ ansible_distribution | lower }}-{{ ansible_distribution_version | lower }}.yml"
+        - "{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+        - "{{ ansible_os_family | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+        - "{{ ansible_distribution | lower }}.yml"
+        - "{{ ansible_os_family | lower }}.yml"
+      paths:
+        - "."
+  ignore_errors: true
+
+- name: groupadd
+  group:
+    name: "{{ jira_group }}"
+    system: true
+    state: "present"
+
+- name: useradd
+  user:
+    name: "{{ jira_owner }}"
+    group: "{{ jira_group }}"
+    home: "{{ jira_home }}"
+    shell: "/usr/sbin/nologin"
+    system: true
+    create_home: false
+    state: "present"
+
+- name: prepare directories
+  file:
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+    state: "{{ item.state | default('directory') }}"
+  loop:
+    - { dest: "/lib/systemd/system" }
+    - { dest: "/lib/systemd/system/jira.service.d" }
+    - { dest: "{{ jira_download.dest | dirname }}" }
+    - { dest: "{{ mysql_jdbc_download.dest | dirname }}" }
+    - { dest: "{{ postgresql_jdbc_download.dest | dirname }}" }
+    - dest: "{{ jira_catalina }}"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+    - dest: "{{ jira_catalina }}/bin"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+    - dest: "{{ jira_catalina }}/conf"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+    - dest: "{{ jira_home }}"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+  register: file_result
+
+- name: download archive
+  vars:
+    ansible_python_interpreter: "python3"
+  get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.dest }}"
+    checksum: "{{ item.checksum }}"
+    mode: "{{ item.mode | default('0644') }}"
+    timeout: 300
+  loop:
+    - "{{ jira_download }}"
+    - "{{ mysql_jdbc_download }}"
+    - "{{ postgresql_jdbc_download }}"
+  when: file_result is changed
+  register: result
+  until: result is succeeded
+
+- name: unarchive package
+  shell: |
+    set -euo pipefail
+    exec &> >(tee -a {{ jira_download.dest }}.log)
+    rm -rf {{ jira_catalina }} \
+      && mkdir -p {{ jira_catalina }}
+    cd {{ jira_catalina }}
+    TMP_DIR="$(mktemp -d)" \
+      && tar -zx -C $TMP_DIR -f {{ jira_download.dest }} \
+      && cp -rfT $TMP_DIR/* . \
+      && rm -rf $TMP_DIR
+    cd {{ jira_catalina }}/lib
+    rm -rf *mysql*.jar
+    TMP_DIR="$(mktemp -d)" \
+      && tar -zx -C $TMP_DIR -f {{ mysql_jdbc_download.dest }} \
+      && mv $TMP_DIR/*/*mysql*-bin.jar . \
+      && rm -rf $TMP_DIR
+    cd {{ jira_catalina }}/lib
+    rm -rf *postgresql*.jar
+    cp {{ postgresql_jdbc_download.dest }} .
+    chown -Rf {{ jira_owner }}:{{ jira_group }} {{ jira_catalina }}
+    chmod 0755 \
+      {{ jira_catalina }} \
+      {{ jira_catalina }}/bin \
+      {{ jira_catalina }}/conf
+  args:
+    executable: "/bin/bash"
+    creates: "{{ jira_download.dest }}.log"
+  notify:
+    - jira | systemctl daemon-reload
+    - jira | systemctl restart jira.service
+
+- name: copy templates
+  template:
+    dest: "{{ item.dest }}"
+    src: "{{ item.src | default('./templates' + item.dest + '.j2') }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - { dest: "/lib/systemd/system/jira.service" }
+    - dest: "{{ jira_catalina }}/bin/setenv.sh"
+      src: "./templates/opt/atlassian/jira/bin/setenv.sh.j2"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+      mode: "0755"
+    - dest: "{{ jira_catalina }}/conf/server.xml"
+      src: "./templates/opt/atlassian/jira/conf/server.xml.j2"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+  notify:
+    - jira | systemctl daemon-reload
+    - jira | systemctl restart jira.service
+
+- name: prepare files
+  file:
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0644') }}"
+    state: "{{ item.state | default('file') }}"
+  loop:
+    - { dest: "/lib/systemd/system/jira.service" }
+    - dest: "{{ jira_catalina }}/bin/setenv.sh"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+      mode: "0755"
+    - dest: "{{ jira_catalina }}/conf/server.xml"
+      owner: "{{ jira_owner }}"
+      group: "{{ jira_group }}"
+  notify:
+    - jira | systemctl daemon-reload
+    - jira | systemctl restart jira.service
+
+- name: patch {{ jira_catalina }}/atlassian-jira/WEB-INF/web.xml
+  vars:
+    ansible_python_interpreter: "python3"
+  xml:
+    path: "{{ jira_catalina }}/atlassian-jira/WEB-INF/web.xml"
+    xpath: "/ns:web-app/ns:session-config/ns:session-timeout"
+    namespaces:
+      ns: "http://java.sun.com/xml/ns/javaee"
+    value: "{{ jira_session_timeout | int }}"
+    state: "present"
+  notify:
+    - jira | systemctl daemon-reload
+    - jira | systemctl restart jira.service
+
+- name: flush handlers
+  meta: flush_handlers
+
+- name: systemctl start jira.service
+  service:
+    name: "jira.service"
+    state: "started"
+    enabled: true
+  changed_when: false
+  ignore_errors: true
