@@ -5,6 +5,7 @@
    become_method: sudo
    roles:
    - ansible-role-python
+   - { role: ansible-role-ossec-local, tags: [ 'ossec', 'ansible-role-ossec-local' ] }
    - ansible-role-openjdk
    - ansible-role-jira
    - os-hardening
