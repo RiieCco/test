@@ -1,11 +1,24 @@
 ---
- - name: what
-   hosts: webserver
-   become: true
-   become_method: sudo
-   roles:
-   - ansible-role-python
-   - { role: ansible-role-ossec-local, tags: [ 'ossec', 'ansible-role-ossec-local' ] }
-   - ansible-role-openjdk
-   - ansible-role-jira
-   - os-hardening
+- hosts: awsbox
+  become: true
+  become_method: sudo
+  tasks:
+  - name: apt-get update the system to prepare for lxml
+    apt: update_cache=yes force_apt_get=yes cache_valid_time=3600
+  - name: Install or update pip
+    apt: pkg=python3-pip state=present
+  - name: start with install for python lxml module (jira dependency)
+    ansible.builtin.command: pip3 install lxml
+
+- hosts: awsbox
+  become: true
+  become_method: sudo
+  roles:
+    - role: jdk-prod
+      java_major_version: 8
+      java_tarball_install: true
+      transport: web
+      transport_web: https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u262-b10/openlogic-openjdk-8u262-b10-linux-x64.tar.gz
+    - role: jira-prod
+    - role: hardening-prod
+    - role: ossec-prod

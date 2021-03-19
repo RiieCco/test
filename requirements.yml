@@ -1,0 +1,15 @@
+- src: alvistack.jira
+  version: "4.6.4"
+  name: jira-prod
+
+- src: lean_delivery.java
+  version: "7.1.0"
+  name: jdk-prod
+
+- src: blabla1337.ansible_role_ossec_local
+  name: ossec-prod
+
+- src: dev-sec.os-hardening
+  version: "6.2.0"
+  name: hardening-prod
+
