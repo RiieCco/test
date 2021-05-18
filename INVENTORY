@@ -1,5 +1,6 @@
 [awsbox]
-3.123.154.109 ansible_user=ubuntu
+3.127.36.224 ansible_user=ubuntu
+3.127.36.224 ansible_ssh_private_key_file=/Users/riccardotencate/Desktop/jira-demo-env.pem
 
 [py3-awsbox:vars]
 ansible_python_interpreter=/usr/bin/python3
